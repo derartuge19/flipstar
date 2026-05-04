@@ -1,6 +1,5 @@
 from django.db import migrations
 
-
 def cleanup_broken_video_urls(apps, schema_editor):
     """Delete reels with broken full-URL media fields (before public_id fix)."""
     Reel = apps.get_model('api', 'Reel')

@@ -1,3 +1,4 @@
+
 from django.db import migrations
 
 def set_onevas_product_ids(apps, schema_editor):

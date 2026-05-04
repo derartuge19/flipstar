@@ -1,6 +1,7 @@
 from django.db import migrations
 import uuid
 
+
 def create_subscription_tiers(apps, schema_editor):
     """Create subscription tiers with Onevas product IDs"""
     SubscriptionTier = apps.get_model('api', 'SubscriptionTier')
