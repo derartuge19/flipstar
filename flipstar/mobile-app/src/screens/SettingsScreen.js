@@ -105,8 +105,8 @@ export default function SettingsScreen({ navigation }) {
         const data = await api.getBlockedUsers();
         const users = Array.isArray(data) ? data : (data.results || []);
         setBlockedUsers(users.map(b => b.blocked));
-      } catch (error) {
-        console.error('Failed to load blocked users:', error);
+      } catch {
+        // backend may not support this endpoint
       } finally {
         setLoadingBlocked(false);
       }

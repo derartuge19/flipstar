@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, FlatList,
   ActivityIndicator, ScrollView, Dimensions, Alert, RefreshControl,
@@ -16,16 +16,35 @@ const BG = '#0D0D0D';
 const CARD = '#1A1A1A';
 const BORDER = '#262626';
 const COLS = 3;
+
+const mediaUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('http')) return url;
+  return `http://localhost:8000${url}`;
+};
 const GAP = 1;
 const ITEM_SIZE = Math.floor((width - (GAP * (COLS - 1)) - 32) / COLS);
 
 export default function ProfileScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { user: authUser, logout } = useAuth();
-  const targetUserId = route?.params?.userId || authUser?.id;
-  const isOwnProfile = !route?.params?.userId || route?.params?.userId === authUser?.id;
+  // authUser from /profile/me/ (UserProfileSerializer):
+  //   authUser.id      = UserProfile.pk
+  //   authUser.user.id = User.pk (or authUser.id if flat login response)
+  const authProfileId = authUser?.id;
+  const authUserId    = authUser?.user?.id || authUser?.id;
+  const routeUserId   = route?.params?.userId;
 
-  const [profile, setProfile] = useState(null);
+  // isOwnProfile is STATE — set definitively after profile data loads so there
+  // is zero chance of a stale/wrong value from timing or ID format differences.
+  const [isOwnProfile, setIsOwnProfile] = useState(!routeUserId); // best initial guess
+
+  // targetProfileId / targetUserId — best-effort before data loads
+  const targetProfileId = !routeUserId ? authProfileId : routeUserId;
+  const targetUserId    = !routeUserId ? authUserId    : routeUserId;
+
+  // Seed own profile immediately from cached authUser so name/username appear at once
+  const [profile, setProfile] = useState(!routeUserId ? authUser : null);
   const [posts, setPosts] = useState([]);
   const [reels, setReels] = useState([]);
   const [savedPosts, setSavedPosts] = useState([]);
@@ -34,6 +53,7 @@ export default function ProfileScreen({ navigation, route }) {
   const [refreshing, setRefreshing] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [activeTab, setActiveTab] = useState('posts');
+  const [postsCount, setPostsCount] = useState(0);
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
   const [showOptions, setShowOptions] = useState(false);
@@ -64,7 +84,7 @@ export default function ProfileScreen({ navigation, route }) {
     { id: 'other', label: 'Other', emoji: '📋' },
   ];
 
-  useEffect(() => { loadProfile(); }, [targetUserId]);
+  useEffect(() => { loadProfile(); }, [targetProfileId]);
   useEffect(() => { 
     if (activeTab === 'reels') loadReels();
     else if (activeTab === 'saved') loadSavedPosts();
@@ -74,61 +94,80 @@ export default function ProfileScreen({ navigation, route }) {
   const loadProfile = async () => {
     try {
       setLoading(true);
-      console.log('Loading profile for user:', targetUserId);
-      
-      const [profileData, postsData] = await Promise.all([
-        api.request(`/profile/${targetUserId}/`),
+      // Own profile: use /profile/me/ so there is zero ID-mismatch risk.
+      // Other profile: use /profile/{pk}/ with the UserProfile pk from route.
+      const profileEndpoint = isOwnProfile ? '/profile/me/' : `/profile/${targetProfileId}/`;
+      const [profileData, postsData, followersData, followingData] = await Promise.all([
+        api.request(profileEndpoint),
         api.request(`/reels/?user=${targetUserId}`),
+        api.request(`/follows/?following=${targetUserId}`),
+        api.request(`/follows/?follower=${targetUserId}`),
       ]);
-      
-      console.log('Profile data:', profileData);
-      console.log('Posts data:', postsData);
-      
+
       setProfile(profileData);
       const postsList = Array.isArray(postsData) ? postsData : (postsData.results || []);
-      console.log('Processed posts list:', postsList);
       setPosts(postsList);
-      setReels(postsList.filter(p => p.media || p.image));
-      
-      setFollowersCount(profileData.followers_count || 0);
-      setFollowingCount(profileData.following_count || 0);
-      setIsFollowing(profileData.is_following || false);
-      setBioText(profileData.bio || '');
+      setPostsCount(postsData.count ?? postsList.length);
+      setReels(postsList.filter(p => p.media));
+
+      // followers_count and following_count come from the nested user object in UserProfileSerializer
+      const nestedUser = profileData.user || profileData;
+      const followersFromProfile = nestedUser.followers_count ?? null;
+      const followingFromProfile = nestedUser.following_count ?? null;
+
+      // Use API list counts as secondary source
+      const followersList = Array.isArray(followersData) ? followersData : (followersData.results || []);
+      const followingList = Array.isArray(followingData) ? followingData : (followingData.results || []);
+
+      setFollowersCount(followersFromProfile !== null ? followersFromProfile : followersList.length);
+      setFollowingCount(followingFromProfile !== null ? followingFromProfile : followingList.length);
+
+      // ── Determine ownership from the ACTUAL returned profile data ──────────
+      // Compare the profile's real User.id against every known auth ID.
+      // This is the only 100 % reliable check — it works regardless of which
+      // ID format was passed in route.params or stored in authUser.
+      const profileUserId = nestedUser.id ?? profileData.id;
+      const amOwner = !routeUserId
+        || String(profileUserId) === String(authUserId)
+        || String(profileUserId) === String(authProfileId)
+        || String(profileData.id) === String(authProfileId);
+      setIsOwnProfile(Boolean(amOwner));
+      // ────────────────────────────────────────────────────────────────────────
+
+      setIsFollowing(amOwner ? false : (nestedUser.is_following || profileData.is_following || false));
+      setBioText(profileData.bio || nestedUser.bio || '');
       setEditForm({
-        first_name: profileData.first_name || '',
-        last_name: profileData.last_name || '',
-        username: profileData.username || '',
-        bio: profileData.bio || '',
-        email: profileData.email || '',
+        first_name: nestedUser.first_name || profileData.first_name || '',
+        last_name: nestedUser.last_name || profileData.last_name || '',
+        username: nestedUser.username || profileData.username || '',
+        bio: profileData.bio || nestedUser.bio || '',
+        email: nestedUser.email || profileData.email || '',
       });
-    } catch (e) { 
-      console.error('Profile error:', e); 
-      console.error('Error details:', e.message);
-    }
+    } catch (e) { console.warn('loadProfile error:', e?.message); }
     finally { setLoading(false); setRefreshing(false); }
   };
 
   const loadReels = async () => {
     try {
       const reelsData = await api.request(`/reels/?user=${targetUserId}`);
-      const reelsList = Array.isArray(reelsData) ? reelsData.filter(p => p.media || p.image) : (reelsData.results || []).filter(p => p.media || p.image);
-      setReels(reelsList);
-    } catch (e) { console.error('Reels error:', e); }
+      const reelsList = Array.isArray(reelsData) ? reelsData : (reelsData.results || []);
+      setReels(reelsList.filter(p => p.media));
+    } catch (e) { /* silent */ }
   };
 
   const loadSavedPosts = async () => {
     if (!isOwnProfile) return;
     try {
-      const savedData = await api.request(`/reels/saved/`);
+      const savedData = await api.request(`/reels/?saved=true`);
       setSavedPosts(Array.isArray(savedData) ? savedData : (savedData.results || []));
-    } catch (e) { console.error('Saved posts error:', e); }
+    } catch (e) { /* silent */ }
   };
 
   const loadCampaignStats = async () => {
     try {
       const campaignData = await api.request(`/campaigns/profile/${targetUserId || ''}`);
       setCampaignStats(campaignData);
-    } catch (e) { console.error('Campaign stats error:', e); }
+    } catch (e) { /* silent */ }
   };
 
   const onRefresh = () => {
@@ -137,6 +176,9 @@ export default function ProfileScreen({ navigation, route }) {
   };
 
   const toggleFollow = async () => {
+    // Hard guard: never let a user follow themselves regardless of UI state
+    const tId = String(targetUserId);
+    if (tId === String(authUserId) || tId === String(authProfileId)) return;
     const prev = isFollowing;
     setIsFollowing(!prev);
     setFollowersCount(c => prev ? c - 1 : c + 1);
@@ -213,15 +255,17 @@ export default function ProfileScreen({ navigation, route }) {
     if (!isOwnProfile) return;
     try {
       setSavingProfile(true);
-      await api.request(`/profile/${targetUserId}/`, {
+      // Use the dedicated update_profile endpoint so bio is saved on the profile model
+      await api.request('/profile/update_profile/', {
         method: 'PATCH',
-        body: JSON.stringify({ bio: bioText })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bio: bioText }),
       });
       setProfile(prev => ({ ...prev, bio: bioText }));
       setEditingBio(false);
-      Alert.alert('Success', 'Bio updated successfully!');
+      Alert.alert('Success', 'Bio updated!');
     } catch (err) {
-      Alert.alert('Error', 'Failed to update bio');
+      Alert.alert('Error', 'Failed to update bio. Please try again.');
     } finally {
       setSavingProfile(false);
     }
@@ -229,51 +273,56 @@ export default function ProfileScreen({ navigation, route }) {
 
   const handleEditProfile = async () => {
     if (!isOwnProfile) return;
+    // Basic validation
+    if (!editForm.username.trim()) {
+      Alert.alert('Error', 'Username cannot be empty.');
+      return;
+    }
     try {
       setSavingProfile(true);
-      await api.request(`/profile/${targetUserId}/`, {
+      // /profile/update_profile/ correctly saves both User fields (username, email,
+      // first_name, last_name) AND the UserProfile bio field in one request.
+      const saved = await api.request('/profile/update_profile/', {
         method: 'PATCH',
-        body: JSON.stringify(editForm)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
       });
-      setProfile(prev => ({ ...prev, ...editForm }));
+      // saved = { id, username, email, first_name, last_name, bio, profile_photo }
+      // Merge into the nested structure that the display reads from
+      setProfile(prev => ({
+        ...prev,
+        bio: saved.bio ?? editForm.bio ?? prev.bio,
+        profile_photo: saved.profile_photo ?? prev.profile_photo,
+        username: saved.username ?? editForm.username ?? prev.username,
+        user: {
+          ...(prev.user || {}),
+          username:   saved.username   ?? editForm.username   ?? prev.user?.username,
+          email:      saved.email      ?? editForm.email      ?? prev.user?.email,
+          first_name: saved.first_name ?? editForm.first_name ?? prev.user?.first_name,
+          last_name:  saved.last_name  ?? editForm.last_name  ?? prev.user?.last_name,
+        },
+      }));
+      setBioText(saved.bio ?? editForm.bio ?? '');
       setShowEditProfile(false);
       Alert.alert('Success', 'Profile updated successfully!');
     } catch (err) {
-      Alert.alert('Error', 'Failed to update profile');
+      Alert.alert('Error', err?.message || 'Failed to update profile. Please try again.');
     } finally {
       setSavingProfile(false);
     }
   };
 
-  const getCurrentTabContent = () => {
+  const currentTabContent = useMemo(() => {
     switch (activeTab) {
-      case 'posts':
-        return posts;
-      case 'reels':
-        return reels;
-      case 'saved':
-        return savedPosts;
-      case 'campaigns':
-        return [];
-      default:
-        return posts;
+      case 'posts': return posts;
+      case 'reels': return reels;
+      case 'saved': return savedPosts;
+      case 'campaigns': return [];
+      default: return posts;
     }
-  };
+  }, [activeTab, posts, reels, savedPosts]);
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: logout },
-    ]);
-  };
-
-  const mediaUrl = (url) => {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    return `http://localhost:8000${url}`;
-  };
-
-  const renderPost = ({ item, index }) => {
+  const renderPost = useCallback(({ item, index }) => {
     const isVideo = !!(item.media || '').match(/\.(mp4|webm|ogg|mov)/i) || (item.media && item.media.includes('/video/'));
     const thumbnail = item.thumbnail_url || item.image || item.media;
     
@@ -300,7 +349,7 @@ export default function ProfileScreen({ navigation, route }) {
         )}
       </TouchableOpacity>
     );
-  };
+  }, [navigation]);
 
   if (loading) {
     return (
@@ -319,11 +368,9 @@ export default function ProfileScreen({ navigation, route }) {
       
       {/* Header */}
       <View style={styles.header}>
-        {!isOwnProfile && (
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="chevron-back" size={24} color={GOLD} />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Ionicons name="chevron-back" size={24} color={GOLD} />
+        </TouchableOpacity>
         <View style={styles.headerSpacer} />
         {isOwnProfile && (
           <View style={styles.headerActions}>
@@ -370,7 +417,7 @@ export default function ProfileScreen({ navigation, route }) {
             
             <View style={styles.statsContainer}>
               <View style={styles.statItem}>
-                <Text style={styles.statNumber}>{posts.length}</Text>
+                <Text style={styles.statNumber}>{postsCount}</Text>
                 <Text style={styles.statLabel}>Posts</Text>
               </View>
               <TouchableOpacity 
@@ -392,9 +439,9 @@ export default function ProfileScreen({ navigation, route }) {
           
           <View style={styles.profileDetails}>
             <Text style={styles.profileName}>
-              {profile?.first_name} {profile?.last_name}
+              {(profile?.user?.first_name || profile?.first_name)} {(profile?.user?.last_name || profile?.last_name)}
             </Text>
-            <Text style={styles.profileUsername}>@{profile?.username}</Text>
+            <Text style={styles.profileUsername}>@{profile?.username || profile?.user?.username}</Text>
             {isOwnProfile && editingBio ? (
               <View style={styles.bioEditContainer}>
                 <TextInput
@@ -621,7 +668,7 @@ export default function ProfileScreen({ navigation, route }) {
         {/* Posts Grid */}
         {activeTab !== 'campaigns' && (
           <View style={styles.postsGrid}>
-            {getCurrentTabContent().length === 0 ? (
+            {currentTabContent.length === 0 ? (
               <View style={styles.emptyState}>
                 <Ionicons 
                   name={
@@ -640,12 +687,16 @@ export default function ProfileScreen({ navigation, route }) {
               </View>
             ) : (
               <FlatList
-                data={getCurrentTabContent()}
+                data={currentTabContent}
                 renderItem={renderPost}
                 keyExtractor={(item) => item.id.toString()}
                 numColumns={COLS}
                 scrollEnabled={false}
                 contentContainerStyle={styles.gridContainer}
+                removeClippedSubviews={true}
+                maxToRenderPerBatch={9}
+                windowSize={5}
+                initialNumToRender={9}
               />
             )}
           </View>

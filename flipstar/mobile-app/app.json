@@ -1,5 +1,18 @@
 {
-  "plugins": [
-    "expo-secure-store"
-  ]
+  "expo": {
+    "name": "FlipStar",
+    "slug": "flipstar-mobile",
+    "version": "1.0.0",
+    "newArchEnabled": false,
+    "plugins": [
+      "expo-secure-store",
+      "expo-video"
+    ],
+    "android": {
+      "package": "com.flipstar.mobile"
+    },
+    "ios": {
+      "bundleIdentifier": "com.flipstar.mobile"
+    }
+  }
 }

@@ -76,6 +76,9 @@ class UserProfile(models.Model):
     otp_expires_at = models.DateTimeField(null=True, blank=True)
     otp_attempts = models.IntegerField(default=0)
 
+    # Push notifications
+    fcm_token = models.CharField(max_length=512, blank=True, default='')
+
     # Privacy settings
     is_private = models.BooleanField(default=False)
     show_activity = models.BooleanField(default=True)
@@ -100,7 +103,13 @@ class Reel(models.Model):
     campaign = models.ForeignKey('Campaign', on_delete=models.SET_NULL, null=True, blank=True, related_name='campaign_posts')
     theme = models.ForeignKey('CampaignTheme', on_delete=models.SET_NULL, null=True, blank=True, related_name='theme_posts')
     is_campaign_post = models.BooleanField(default=False)
-    
+
+    # Media processing
+    thumbnail = models.ImageField(upload_to='thumbnails/', null=True, blank=True)
+    blurhash = models.CharField(max_length=100, blank=True, default='')
+    duration = models.FloatField(null=True, blank=True)
+    processed = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

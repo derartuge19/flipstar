@@ -195,8 +195,8 @@ const api = {
         if (response.status === 401) {
           console.error('🔒 401 Unauthorized - authentication required');
         }
-        const silentEndpoints = ['/notifications/me/', '/profile/get_privacy/', '/profile/update_privacy/'];
-        const isSilent = response.status === 404 && silentEndpoints.some(e => endpoint.includes(e));
+        const silentEndpoints = ['/notifications/me/', '/profile/get_privacy/', '/profile/update_privacy/', '/blocks/'];
+        const isSilent = silentEndpoints.some(e => endpoint.includes(e));
         
         if (!isSilent) {
           console.error(`API Error [${endpoint}]:`, response.status, data);
@@ -402,7 +402,7 @@ const api = {
   },
 
   getBlockedUsers: () => 
-    api.request('/blocks/').then(r => { invalidateCache('/follows'); return r; }),
+    api.request('/blocks/').then(r => { invalidateCache('/follows'); return r; }).catch(() => []),
 
   getFollowers: (userId) => api.request(`/follows/?following=${userId}`),
 

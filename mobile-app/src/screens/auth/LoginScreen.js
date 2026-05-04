@@ -225,6 +225,14 @@ export default function LoginScreen({ navigation }) {
       <ScrollView style={s.container} contentContainerStyle={[s.scroll, { paddingTop: insets.top + 16 }]} showsVerticalScrollIndicator={false}>
         {/* Logos */}
         <View style={s.logosRow}>
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <View style={{ flex: 1, flexDirection: 'row' }}>
+              {Array.from({ length: 40 }, (_, i) => {
+                const v = Math.round(255 * (1 - i / 39));
+                return <View key={i} style={{ flex: 1, backgroundColor: `rgb(${v},${v},${v})` }} />;
+              })}
+            </View>
+          </View>
           <Image 
             source={require('../../../assets/images/ethio-logo.png')} 
             style={s.ethioLogo}
@@ -322,8 +330,9 @@ const s = StyleSheet.create({
     alignItems: 'center', 
     marginBottom: 24, 
     borderRadius: 12, 
-    padding: '10px 12px',
-    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    overflow: 'hidden',
   },
   ethioLogo: { width: 100, height: 50 },
   flipstarLogo: { width: 100, height: 50 },

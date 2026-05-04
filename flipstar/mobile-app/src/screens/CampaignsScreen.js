@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, RefreshControl, ScrollView, Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -41,12 +41,6 @@ function mediaUrl(url) {
   return `http://localhost:8000${url}`;
 }
 
-function debugImage(url, fieldName) {
-  console.log(`Image Debug - ${fieldName}:`, url);
-  console.log(`Processed URL:`, mediaUrl(url));
-  return mediaUrl(url);
-}
-
 export default function CampaignsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const [campaigns, setCampaigns] = useState([]);
@@ -62,7 +56,6 @@ export default function CampaignsScreen({ navigation }) {
       const status = filter === 'all' ? '' : filter;
       const data = await api.request(`/campaigns/?status=${status}`);
       const campaignsData = Array.isArray(data) ? data : (data.results || []);
-      console.log('Campaigns loaded:', campaignsData);
       setCampaigns(campaignsData);
     } catch (error) {
       console.error('Failed to load campaigns:', error);
@@ -73,7 +66,7 @@ export default function CampaignsScreen({ navigation }) {
     }
   };
 
-  const renderCampaignCard = ({ item, index }) => {
+  const renderCampaignCard = useCallback(({ item }) => {
     const statusInfo = STATUS_META[item.status] || STATUS_META.active;
     const isActive = item.status === 'active';
     const btnLabel = isActive ? 'View & Join' : 
@@ -82,7 +75,7 @@ export default function CampaignsScreen({ navigation }) {
     
     return (
       <TouchableOpacity 
-        style={[styles.campaignCard, { animationDelay: `${index * 100}ms` }]}
+        style={styles.campaignCard}
         onPress={() => navigation.navigate('CampaignDetail', { campaignId: item.id })} 
         activeOpacity={0.85}
       >
@@ -90,11 +83,9 @@ export default function CampaignsScreen({ navigation }) {
         <View style={styles.imageContainer}>
           {item.image ? (
             <Image 
-              source={{ uri: debugImage(item.image, 'campaign.image') }} 
+              source={{ uri: mediaUrl(item.image) }} 
               style={styles.banner} 
-              resizeMode="cover" 
-              onError={(error) => console.log('Image loading error:', error)}
-              onLoad={() => console.log('Image loaded successfully')}
+              resizeMode="cover"
             />
           ) : (
             <View style={[styles.banner, styles.bannerPlaceholder]}>
@@ -166,7 +157,7 @@ export default function CampaignsScreen({ navigation }) {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [navigation]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -238,6 +229,10 @@ export default function CampaignsScreen({ navigation }) {
           data={campaigns}
           renderItem={renderCampaignCard}
           keyExtractor={item => String(item.id)}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={5}
+          windowSize={5}
+          initialNumToRender={4}
           refreshControl={
             <RefreshControl 
               refreshing={refreshing} 

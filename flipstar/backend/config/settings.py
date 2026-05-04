@@ -172,13 +172,26 @@ if IS_RENDER:
             'NAME': str(BASE_DIR / 'fallback_db.sqlite3'),
         }
 else:
-    # Local development: SQLite
-    DATABASES = {
-        'default': {
-            'ENGINE': config('DB_ENGINE', default='django.db.backends.sqlite3'),
-            'NAME': config('DB_NAME', default=str(BASE_DIR / 'db.sqlite3')),
+    # Local / Docker development
+    _db_engine = config('DB_ENGINE', default='django.db.backends.sqlite3')
+    if _db_engine == 'django.db.backends.postgresql':
+        DATABASES = {
+            'default': {
+                'ENGINE': _db_engine,
+                'NAME': config('DB_NAME', default='flipstar_db'),
+                'USER': config('DB_USER', default='flipstar_user'),
+                'PASSWORD': config('DB_PASSWORD', default='changeme'),
+                'HOST': config('DB_HOST', default='postgres'),
+                'PORT': config('DB_PORT', default='5432'),
+            }
         }
-    }
+    else:
+        DATABASES = {
+            'default': {
+                'ENGINE': _db_engine,
+                'NAME': config('DB_NAME', default=str(BASE_DIR / 'db.sqlite3')),
+            }
+        }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},

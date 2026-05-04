@@ -97,7 +97,7 @@ const Avatar = React.memo(({ uri, size = 36, name = '', showBorder = false }) =>
 });
 
 // Enhanced ReelItem component matching website's TikTok-style layout
-function ReelItem({ 
+const ReelItem = React.memo(function ReelItem({ 
   item, 
   isActive, 
   onLike, 
@@ -107,6 +107,7 @@ function ReelItem({
   onShare,
   onReport,
   onShowProfile,
+  onNavigate,
   user,
   index,
   videos,
@@ -132,12 +133,28 @@ function ReelItem({
   const [videoPaused, setVideoPaused] = useState(false);
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoOrientation, setVideoOrientation] = useState('portrait');
-  const videoRef = useRef(null);
 
-  const isVideo = !!(item.media) && (
-    /\.(mp4|webm|ogg|mov)(\?|$)/i.test(item.media) ||
-    item.media.includes('/video/upload/')
-  );
+  // Treat all reel media as video (reels endpoint only returns video content)
+  const isVideo = !!(item.media);
+
+  const videoUri = item.media
+    ? (item.media.startsWith('http') ? item.media : `http://localhost:8000${item.media}`)
+    : null;
+
+  const webViewRef = useRef(null);
+
+  useEffect(() => {
+    if (!webViewRef.current || !isVideo) return;
+    const js = isActive && !videoPaused
+      ? `var v=document.getElementById('v'); if(v){v.play();} true;`
+      : `var v=document.getElementById('v'); if(v){v.pause();} true;`;
+    webViewRef.current.injectJavaScript(js);
+  }, [isActive, videoPaused, isVideo]);
+
+  useEffect(() => {
+    if (!webViewRef.current) return;
+    webViewRef.current.injectJavaScript(`var v=document.getElementById('v'); if(v){v.muted=${videoMuted};} true;`);
+  }, [videoMuted]);
 
   const handleVideoTouch = () => {
     const now = Date.now();
@@ -148,11 +165,15 @@ function ReelItem({
       lastTapRef.current = 0;
       handleDoubleTap();
     } else {
-      // Single tap - toggle play/pause (placeholder)
+      // Single tap - toggle play/pause
       lastTapRef.current = now;
       if (isVideo) {
-        setShowPauseIcon(!showPauseIcon);
-        setTimeout(() => setShowPauseIcon(false), 1000);
+        const nowPaused = !videoPaused;
+        setVideoPaused(nowPaused);
+        if (nowPaused) {
+          setShowPauseIcon(true);
+          setTimeout(() => setShowPauseIcon(false), 800);
+        }
       }
     }
   };
@@ -377,6 +398,26 @@ function ReelItem({
     }
   };
 
+  // Delete own reel
+  const handleDelete = () => {
+    setShowMenu(false);
+    Alert.alert('Delete Reel', 'Are you sure you want to delete this reel?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.request(`/reels/${item.id}/`, { method: 'DELETE' });
+            if (setVideos) setVideos(prev => prev.filter(v => v.id !== item.id));
+          } catch {
+            Alert.alert('Error', 'Failed to delete reel');
+          }
+        },
+      },
+    ]);
+  };
+
   // Not interested
   const handleNotInterested = async () => {
     setShowLongPressMenu(null);
@@ -454,13 +495,21 @@ function ReelItem({
         delayLongPress={500}
       >
         {item.media ? (
-          <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }]}>
-            <View style={{ alignItems: 'center' }}>
-              <Ionicons name="play-circle" size={64} color="#fff" />
-              <Text style={{ color: '#fff', marginTop: 12, fontSize: 16, fontWeight: '600' }}>Video</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4, fontSize: 12 }}>Tap to interact</Text>
-            </View>
-          </View>
+          isVideo && videoUri ? (
+            <WebView
+              ref={webViewRef}
+              source={{ html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}video.horizontal{object-fit:contain}</style></head><body><video id="v" ${isActive?'autoplay':''} loop muted playsinline webkit-playsinline preload="auto" src="${videoUri}"></video><script>var v=document.getElementById('v');v.addEventListener('loadedmetadata',function(){if(v.videoWidth>v.videoHeight){v.classList.add('horizontal');}});</script></body></html>` }}
+              style={StyleSheet.absoluteFill}
+              allowsInlineMediaPlayback
+              mediaPlaybackRequiresUserAction={false}
+              scrollEnabled={false}
+              bounces={false}
+              javaScriptEnabled
+              androidLayerType="hardware"
+              startInLoadingState={false}
+              onError={() => {}}
+            />
+          ) : null
         ) : (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111' }]} />
         )}
@@ -487,45 +536,6 @@ function ReelItem({
       {/* Dark gradient overlay */}
       <View style={styles.gradient} pointerEvents="none" />
 
-      {/* Top Right Actions */}
-      <View style={styles.topRightActions}>
-        {/* Notifications */}
-        <TouchableOpacity style={styles.topActionBtn}>
-          <Ionicons name="notifications-outline" size={24} color={LIGHT_GOLD} />
-        </TouchableOpacity>
-        
-        {/* More Options Menu */}
-        <TouchableOpacity 
-          style={styles.topActionBtn} 
-          onPress={() => setShowMenu(!showMenu)}
-        >
-          <Ionicons name="ellipsis-horizontal" size={20} color={LIGHT_GOLD} />
-        </TouchableOpacity>
-
-        {/* Dropdown Menu */}
-        {showMenu && (
-          <View style={styles.dropdownMenu}>
-            <TouchableOpacity style={styles.menuItem} onPress={handleShareVideo}>
-              <Ionicons name="share-outline" size={18} color={LIGHT_GOLD} />
-              <Text style={styles.menuText}>Share</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={handleNotInterested}>
-              <Ionicons name="eye-off-outline" size={18} color="#78716C" />
-              <Text style={styles.menuText}>Not Interested</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); setShowReportModal(true); }}>
-              <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
-              <Text style={[styles.menuText, { color: '#EF4444' }]}>Report</Text>
-            </TouchableOpacity>
-            {isOwnPost && (
-              <TouchableOpacity style={styles.menuItem}>
-                <Ionicons name="trash-outline" size={18} color="#EF4444" />
-                <Text style={[styles.menuText, { color: '#EF4444' }]}>Delete</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-      </View>
 
       {/* Right Side Actions */}
       <View style={styles.rightActions}>
@@ -557,7 +567,7 @@ function ReelItem({
             <Ionicons 
               name={videoMuted ? 'volume-mute' : 'volume-high'}
               size={32}
-              color="#fff"
+              color={GOLD}
             />
           </View>
           <Text style={styles.actionLabel}>{videoMuted ? 'Off' : 'On'}</Text>
@@ -572,7 +582,7 @@ function ReelItem({
             <Ionicons 
               name={item.is_liked ? 'heart' : 'heart-outline'}
               size={32}
-              color={item.is_liked ? '#EF4444' : '#fff'}
+              color={item.is_liked ? '#EF4444' : GOLD}
               fill={item.is_liked ? '#EF4444' : 'none'}
             />
           </View>
@@ -581,13 +591,13 @@ function ReelItem({
 
         {/* Comment Button */}
         <TouchableOpacity style={styles.actionItem} onPress={() => setShowComments(true)}>
-          <Ionicons name="chatbubble-outline" size={30} color="#fff" />
+          <Ionicons name="chatbubble-outline" size={30} color={GOLD} />
           <Text style={styles.actionLabel}>{item.comment_count || 0}</Text>
         </TouchableOpacity>
 
         {/* Share Button */}
         <TouchableOpacity style={styles.actionItem} onPress={handleShareVideo}>
-          <Ionicons name="share-outline" size={28} color="#fff" />
+          <Ionicons name="share-outline" size={28} color={GOLD} />
           <Text style={styles.actionLabel}>{item.shares || 0}</Text>
         </TouchableOpacity>
 
@@ -596,7 +606,7 @@ function ReelItem({
           <Ionicons 
             name={item.is_saved ? 'bookmark' : 'bookmark-outline'}
             size={28}
-            color={item.is_saved ? LIGHT_GOLD : '#fff'}
+            color={item.is_saved ? LIGHT_GOLD : GOLD}
           />
         </TouchableOpacity>
 
@@ -732,7 +742,7 @@ function ReelItem({
       )}
     </View>
   );
-}
+});
 
 // Comments Modal Component
 const CommentsModal = React.memo(function CommentsModal({ reel, user, onClose }) {
@@ -957,6 +967,8 @@ export default function ReelsScreen({ navigation, route }) {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeTab, setActiveTab] = useState('for_you');
+  const [screenMenuVisible, setScreenMenuVisible] = useState(false);
+  const [screenShowReport, setScreenShowReport] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const LIMIT = 10;
@@ -1005,10 +1017,8 @@ export default function ReelsScreen({ navigation, route }) {
           if (idx > 0) { const [item] = results.splice(idx, 1); results.unshift(item); }
         }
         
-        // Show all content for reels (less restrictive to ensure content appears)
-        const filteredResults = results.filter(reel => {
-          return reel && (reel.media || reel.image || reel.id); // Show any valid content
-        });
+        // Only show video content in reels
+        const filteredResults = results.filter(reel => reel && reel.media);
         
         // Shuffle for randomized feed
         const shuffledResults = shuffleArray(filteredResults);
@@ -1041,10 +1051,8 @@ export default function ReelsScreen({ navigation, route }) {
       const data = await api.request(endpoint);
       let results = Array.isArray(data) ? data : (data.results || []);
       
-      // Show all content for reels (less restrictive to ensure content appears)
-      const filteredResults = results.filter(reel => {
-        return reel && (reel.media || reel.image || reel.id); // Show any valid content
-      });
+      // Only show video content in reels
+      const filteredResults = results.filter(reel => reel && reel.media);
       
       // Shuffle for randomized feed
       const shuffledResults = shuffleArray(filteredResults);
@@ -1120,7 +1128,53 @@ export default function ReelsScreen({ navigation, route }) {
     setActiveTab(tab);
   };
 
-  const renderReel = ({ item, index }) => (
+  const handleNavigate = useCallback((screen, params) => {
+    navigation.navigate(screen, params);
+  }, [navigation]);
+
+  const currentReel = reels[activeIndex];
+  const isOwnCurrentReel = user?.id === currentReel?.user?.id;
+
+  const screenHandleShare = useCallback(async () => {
+    setScreenMenuVisible(false);
+    if (!currentReel) return;
+    try {
+      await Share.share({ message: `Check out this reel on FlipStar!` });
+    } catch {}
+  }, [currentReel]);
+
+  const screenHandleNotInterested = useCallback(async () => {
+    setScreenMenuVisible(false);
+    if (!currentReel) return;
+    try {
+      await api.request('/reels/not-interested/', {
+        method: 'POST',
+        body: JSON.stringify({ reel_id: currentReel.id }),
+      });
+    } catch {}
+    setReels(prev => prev.filter(v => v.id !== currentReel.id));
+  }, [currentReel]);
+
+  const screenHandleDelete = useCallback(() => {
+    setScreenMenuVisible(false);
+    if (!currentReel) return;
+    Alert.alert('Delete Reel', 'Are you sure you want to delete this reel?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.request(`/reels/${currentReel.id}/`, { method: 'DELETE' });
+            setReels(prev => prev.filter(v => v.id !== currentReel.id));
+          } catch {
+            Alert.alert('Error', 'Failed to delete reel');
+          }
+        },
+      },
+    ]);
+  }, [currentReel]);
+
+  const renderReel = useCallback(({ item, index }) => (
     <ReelItem
       item={item}
       index={index}
@@ -1129,8 +1183,9 @@ export default function ReelsScreen({ navigation, route }) {
       videos={reels}
       setVideos={setReels}
       onShowProfile={handleShowProfile}
+      onNavigate={handleNavigate}
     />
-  );
+  ), [activeIndex, user, reels, handleShowProfile, handleNavigate]);
 
   if (loading) {
     return (
@@ -1194,6 +1249,10 @@ export default function ReelsScreen({ navigation, route }) {
         viewabilityConfig={{ itemVisiblePercentThreshold: 70 }}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.1}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={3}
+        windowSize={5}
+        initialNumToRender={2}
         refreshControl={
           <RefreshControl 
             refreshing={isRefreshing} 
@@ -1217,6 +1276,49 @@ export default function ReelsScreen({ navigation, route }) {
           </View>
         }
       />
+
+      {/* Fixed top-right overlay — AFTER FlatList so it renders on top */}
+      <View style={[styles.topRightActions, { top: insets.top + 10, zIndex: 999, elevation: 20 }]}>
+        <TouchableOpacity style={styles.topActionBtn} onPress={() => navigation.navigate('Notifications')}>
+          <Ionicons name="notifications-outline" size={24} color={LIGHT_GOLD} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.topActionBtn} onPress={() => setScreenMenuVisible(v => !v)}>
+          <Ionicons name="ellipsis-horizontal" size={20} color={LIGHT_GOLD} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Dropdown rendered separately so it's never clipped */}
+      {screenMenuVisible && (
+        <View style={[styles.dropdownMenu, { top: insets.top + 70, right: 16, zIndex: 1000, elevation: 25 }]}>
+          <TouchableOpacity style={styles.menuItem} onPress={screenHandleShare}>
+            <Ionicons name="share-outline" size={18} color={LIGHT_GOLD} />
+            <Text style={styles.menuText}>Share</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={screenHandleNotInterested}>
+            <Ionicons name="eye-off-outline" size={18} color="#78716C" />
+            <Text style={styles.menuText}>Not Interested</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={() => { setScreenMenuVisible(false); setScreenShowReport(true); }}>
+            <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+            <Text style={[styles.menuText, { color: '#EF4444' }]}>Report</Text>
+          </TouchableOpacity>
+          {isOwnCurrentReel && (
+            <TouchableOpacity style={styles.menuItem} onPress={screenHandleDelete}>
+              <Ionicons name="trash-outline" size={18} color="#EF4444" />
+              <Text style={[styles.menuText, { color: '#EF4444' }]}>Delete</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Screen-level Report Modal */}
+      {screenShowReport && currentReel && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setScreenShowReport(false)}>
+          <View style={styles.modalOverlay}>
+            <ReportModal reel={currentReel} onClose={() => setScreenShowReport(false)} />
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -1318,36 +1420,35 @@ const styles = StyleSheet.create({
   actionItem: { 
     alignItems: 'center',
     gap: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 6,
   },
   actionIcon: {
     width: 56,
     height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(255,255,255,0.15)',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
   },
   likeAnimation: {
     transform: [{ scale: 1.2 }],
   },
   actionLabel: { 
-    color: '#fff', 
+    color: GOLD, 
     fontSize: 12, 
     fontWeight: '600',
     marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.9)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   
   // Bottom Info
   bottomInfo: { 
     position: 'absolute', 
-    bottom: 90, 
+    bottom: 30, 
     left: 12, 
     right: 90,
   },

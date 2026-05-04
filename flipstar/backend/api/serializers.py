@@ -136,9 +136,14 @@ class ReelSerializer(serializers.ModelSerializer):
     campaign_id = serializers.PrimaryKeyRelatedField(source='campaign', read_only=True)
     campaign_title = serializers.CharField(source='campaign.title', read_only=True, default=None)
 
+    thumbnail = serializers.SerializerMethodField()
+    blurhash = serializers.CharField(read_only=True)
+    duration = serializers.FloatField(read_only=True)
+    processed = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = Reel
-        fields = ['id', 'user', 'image', 'media', 'caption', 'hashtags', 'hashtags_list', 'overlay_text', 'votes', 'view_count', 'comment_count', 'created_at', 'is_liked', 'is_saved', 'recent_comments', 'is_campaign_post', 'campaign_id', 'campaign_title']
+        fields = ['id', 'user', 'image', 'media', 'thumbnail', 'blurhash', 'duration', 'processed', 'caption', 'hashtags', 'hashtags_list', 'overlay_text', 'votes', 'view_count', 'comment_count', 'created_at', 'is_liked', 'is_saved', 'recent_comments', 'is_campaign_post', 'campaign_id', 'campaign_title']
     
     def _build_url(self, field, request):
         """Build absolute URL for a file field, handling both local and Cloudinary storage."""
@@ -187,6 +192,9 @@ class ReelSerializer(serializers.ModelSerializer):
 
     def get_media(self, obj):
         return self._build_url(obj.media, self.context.get('request'))
+
+    def get_thumbnail(self, obj):
+        return self._build_url(obj.thumbnail, self.context.get('request'))
     
     def get_comment_count(self, obj):
         # Use DB annotation if available (set by ReelViewSet.get_queryset)

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Crown, Zap, Calendar, Coins, Check, X, ChevronLeft } from 'lucide-react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
@@ -52,6 +52,13 @@ export function SubscriptionPage({ user, onBack }) {
   const [loading, setLoading] = useState(false);
   const [selectedTier, setSelectedTier] = useState(null);
   const [processing, setProcessing] = useState(false);
+  const [smsSent, setSmsSent] = useState(false);
+  const [pendingTier, setPendingTier] = useState(null);
+  const [pollCount, setPollCount] = useState(0);
+  const [confirmed, setConfirmed] = useState(false);
+  const pollRef = useRef(null);
+  const POLL_INTERVAL = 5000;
+  const MAX_POLLS = 36; // 3 minutes
 
   useEffect(() => {
     // Load tiers and subscription in background
@@ -76,24 +83,48 @@ export function SubscriptionPage({ user, onBack }) {
     }
   };
 
+  const startPolling = (tier) => {
+    let count = 0;
+    pollRef.current = setInterval(async () => {
+      count++;
+      setPollCount(count);
+      try {
+        const sub = await api.request('/subscriptions/');
+        if (sub && sub.status === 'active') {
+          clearInterval(pollRef.current);
+          setCurrentSubscription(sub);
+          setConfirmed(true);
+        }
+      } catch {}
+      if (count >= MAX_POLLS) {
+        clearInterval(pollRef.current);
+      }
+    }, POLL_INTERVAL);
+  };
+
+  const stopPolling = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    setSmsSent(false);
+    setPendingTier(null);
+    setPollCount(0);
+    setConfirmed(false);
+  };
+
   const handleSubscribe = (tier) => {
-    // Get tier code for SMS
-    const tierCode = tier.duration_type === 'daily' ? 'A' : 
-                     tier.duration_type === 'weekly' ? 'B' : 
-                     tier.duration_type === 'monthly' ? 'C' : 'D';
-    
-    // Open SMS app with pre-filled message
-    const shortCode = '9286';
-    const messageBody = tierCode;
-    
-    // Encode the message to handle spaces and special characters
-    const encodedMessage = encodeURIComponent(messageBody);
-    
-    // Use the most compatible SMS URL format for both iOS and Android
-    const smsUrl = `sms:${shortCode}?body=${encodedMessage}`;
-    
-    // Trigger the system messaging app
+    const tierCode = tier.duration_type === 'daily' ? 'OK1' :
+                     tier.duration_type === 'weekly' ? 'OK2' :
+                     tier.duration_type === 'monthly' ? 'OK3' : 'OK4';
+    const shortCode = tier.short_code || '9286';
+    const smsUrl = `sms:${shortCode}?body=${encodeURIComponent(tierCode)}`;
     window.location.href = smsUrl;
+    // Show pending screen after a short delay (SMS app opens)
+    setTimeout(() => {
+      setPendingTier(tier);
+      setSmsSent(true);
+      setPollCount(0);
+      setConfirmed(false);
+      if (user) startPolling(tier);
+    }, 1500);
   };
 
   const handlePayment = async () => {
@@ -166,6 +197,101 @@ export function SubscriptionPage({ user, onBack }) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: T.sub }}>
         Loading subscription data...
+      </div>
+    );
+  }
+
+  // ── Pending / Confirmed overlay ──
+  if (smsSent && pendingTier) {
+    const timedOut = pollCount >= MAX_POLLS;
+    return (
+      <div style={{ minHeight: '100vh', background: '#0D0D0D', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
+        <div style={{ width: '100%', maxWidth: 400, background: '#1A1A1A', borderRadius: 20, padding: '36px 28px', border: '1px solid #F9E08B30', textAlign: 'center' }}>
+
+          {confirmed ? (
+            <>
+              <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#F9E08B', marginBottom: 8 }}>Subscription Active!</div>
+              <div style={{ fontSize: 14, color: '#aaa', marginBottom: 8 }}>
+                Your <strong style={{ color: '#fff' }}>{pendingTier.name}</strong> plan is now active.
+              </div>
+              <div style={{ fontSize: 13, color: '#aaa', marginBottom: 28 }}>
+                {user ? 'You can now enjoy all FlipStar features.' : 'Log in with your phone number and PIN to get started.'}
+              </div>
+              <button
+                onClick={() => { stopPolling(); onBack && onBack(); }}
+                style={{ width: '100%', padding: '14px', background: 'linear-gradient(to bottom, #D4AF37, #F9E08B, #B8860B)', border: 'none', borderRadius: 10, color: '#000', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
+              >
+                {user ? 'Go to FlipStar →' : 'Log In Now →'}
+              </button>
+            </>
+          ) : timedOut ? (
+            <>
+              <div style={{ fontSize: 56, marginBottom: 16 }}>⏱️</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#F9E08B', marginBottom: 8 }}>Taking longer than expected</div>
+              <div style={{ fontSize: 13, color: '#aaa', marginBottom: 24 }}>
+                Check your SMS inbox for a confirmation message from Ethiotelecom. Your subscription may still be processing.
+              </div>
+              <button
+                onClick={() => { stopPolling(); loadSubscriptionData(); }}
+                style={{ width: '100%', padding: '13px', background: 'linear-gradient(to bottom, #D4AF37, #F9E08B, #B8860B)', border: 'none', borderRadius: 10, color: '#000', fontSize: 15, fontWeight: 800, cursor: 'pointer', marginBottom: 12 }}
+              >
+                Check Again
+              </button>
+              <button
+                onClick={stopPolling}
+                style={{ width: '100%', padding: '13px', background: 'none', border: '1px solid #333', borderRadius: 10, color: '#aaa', fontSize: 14, cursor: 'pointer' }}
+              >
+                Back to Plans
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>📱</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#F9E08B', marginBottom: 8 }}>SMS Sent!</div>
+              <div style={{ fontSize: 14, color: '#aaa', marginBottom: 4 }}>
+                Waiting for Ethiotelecom to confirm your <strong style={{ color: '#fff' }}>{pendingTier.name}</strong> subscription…
+              </div>
+              {user && (
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 20 }}>
+                  Checking every 5 seconds ({Math.max(0, MAX_POLLS - pollCount)} checks remaining)
+                </div>
+              )}
+              {!user && (
+                <div style={{ fontSize: 13, color: '#aaa', marginBottom: 20 }}>
+                  Once confirmed, you'll receive an SMS with a link to complete your registration.
+                </div>
+              )}
+              {/* Spinner */}
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: '50%',
+                  border: '3px solid #262626',
+                  borderTop: '3px solid #F9E08B',
+                  animation: 'spin 1s linear infinite'
+                }} />
+              </div>
+              <div style={{ padding: '12px 16px', background: '#111', borderRadius: 10, marginBottom: 20, fontSize: 13, color: '#aaa' }}>
+                <div style={{ color: '#F9E08B', fontWeight: 700, marginBottom: 4 }}>Plan selected</div>
+                <div>{pendingTier.name} — {pendingTier.price_etb} ETB</div>
+                <div style={{ fontSize: 12, marginTop: 2 }}>SMS sent to: {pendingTier.short_code || '9286'}</div>
+              </div>
+              <button
+                onClick={() => handleSubscribe(pendingTier)}
+                style={{ width: '100%', padding: '11px', background: 'none', border: '1px solid #F9E08B44', borderRadius: 10, color: '#F9E08B', fontSize: 13, fontWeight: 700, cursor: 'pointer', marginBottom: 8 }}
+              >
+                Resend SMS
+              </button>
+              <button
+                onClick={stopPolling}
+                style={{ width: '100%', padding: '11px', background: 'none', border: '1px solid #333', borderRadius: 10, color: '#666', fontSize: 13, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }

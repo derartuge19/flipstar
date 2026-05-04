@@ -290,40 +290,44 @@ def login_with_phone(request):
         print(f"[LOGIN WITH PHONE DEBUG] Invalid phone format")
         return Response({'error': 'Invalid Ethiopian phone number'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # Check if user has active SMS subscription
+    # 1. Check active SMS subscription (primary path)
     print(f"[LOGIN WITH PHONE DEBUG] Checking for SMS subscription")
     sms_subscription = UserSubscription.objects.filter(
         onevas_phone_number=phone,
         status='active',
         subscription_source='sms'
     ).first()
-    
-    if not sms_subscription:
-        print(f"[LOGIN WITH PHONE DEBUG] No SMS subscription found")
-        return Response({'error': 'No active SMS subscription found. Please register with OTP.'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    print(f"[LOGIN WITH PHONE DEBUG] Found SMS subscription, user: {sms_subscription.user}")
-    
-    # If user already exists, try regular login
-    if sms_subscription.user:
+
+    if sms_subscription and sms_subscription.user:
         user = sms_subscription.user
-        print(f"[LOGIN WITH PHONE DEBUG] User exists, attempting login: {user.username}")
+        print(f"[LOGIN WITH PHONE DEBUG] Found via subscription, user: {user.username}")
         if user.check_password(password):
             token, _ = Token.objects.get_or_create(user=user)
-            print(f"[LOGIN WITH PHONE DEBUG] Login successful: {user.username}")
             return Response({'user': UserSerializer(user).data, 'token': token.key})
-        else:
-            print(f"[LOGIN WITH PHONE DEBUG] Invalid password for user: {user.username}")
-            return Response({'error': 'Invalid password'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    # User doesn't exist yet - need to register first
-    print(f"[LOGIN WITH PHONE DEBUG] User does not exist, requires registration")
-    return Response({
-        'error': 'User account not created yet',
-        'message': 'Please register your account first. Your SMS subscription will be linked automatically.',
-        'phone': phone,
-        'requires_registration': True
-    }, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'Invalid password'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    if sms_subscription and not sms_subscription.user:
+        return Response({
+            'error': 'User account not created yet',
+            'requires_registration': True,
+            'phone': phone
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # 2. Fallback: find user by UserProfile.phone_number (registered via subscription OTP)
+    print(f"[LOGIN WITH PHONE DEBUG] No subscription found, checking UserProfile.phone_number")
+    try:
+        profile = UserProfile.objects.get(phone_number=phone)
+        user = profile.user
+        print(f"[LOGIN WITH PHONE DEBUG] Found via UserProfile: {user.username}")
+        if user.check_password(password):
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({'user': UserSerializer(user).data, 'token': token.key})
+        return Response({'error': 'Invalid password'}, status=status.HTTP_401_UNAUTHORIZED)
+    except UserProfile.DoesNotExist:
+        pass
+
+    print(f"[LOGIN WITH PHONE DEBUG] Phone not found anywhere")
+    return Response({'error': 'No account found for this phone number. Please subscribe and register first.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ── Phone OTP Registration ─────────────────────────────────────────────────
@@ -366,7 +370,20 @@ def send_phone_otp(request):
     print(f"[OTP DEBUG] OTPService result - success: {success}, message: {message}")
     
     if success:
-        return Response({'message': message, 'phone': phone})
+        # In dev/local mode return the OTP code so frontend can show it (SMS not required)
+        from django.conf import settings as _settings
+        from .services.otp_service import OTPService as _OTP
+        dev_code = None
+        if _settings.DEBUG:
+            cached = _OTP.__dict__  # just to access class
+            from django.core.cache import cache as _cache
+            _data = _cache.get(f'otp:{phone}')
+            if _data:
+                dev_code = _data.get('code')
+        resp = {'message': message, 'phone': phone}
+        if dev_code:
+            resp['dev_code'] = dev_code
+        return Response(resp)
     else:
         return Response({'error': message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
@@ -603,6 +620,43 @@ def login_with_subscription_otp(request):
         import traceback
         print(f"[SUBSCRIPTION LOGIN DEBUG] Traceback: {traceback.format_exc()}")
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def dev_create_subscription(request):
+    """DEV ONLY: Create a fake active subscription with OTP for local testing without Onevas."""
+    from django.conf import settings as _s
+    if not _s.DEBUG:
+        return Response({'error': 'Only available in DEBUG mode'}, status=403)
+    from .models_subscription import SubscriptionPlan as UserSubscription, SubscriptionTier
+    phone_raw = request.data.get('phone', '').strip()
+    phone = _normalize_ethiopian_phone(phone_raw)
+    if not phone:
+        return Response({'error': 'Invalid phone number'}, status=400)
+    tier = SubscriptionTier.objects.first()
+    if not tier:
+        return Response({'error': 'No subscription tiers found. Run seed_subscription_tiers first.'}, status=400)
+    from .services.otp_service import OTPService
+    otp_code = OTPService.generate_otp()
+    # Cancel any existing unlinked subscription for this phone
+    UserSubscription.objects.filter(onevas_phone_number=phone, user__isnull=True).delete()
+    sub = UserSubscription.objects.create(
+        tier=tier,
+        onevas_phone_number=phone,
+        status='active',
+        subscription_source='sms',
+        setup_otp=otp_code,
+        user=None,
+    )
+    reg_url = f"http://localhost/?subscription_tp=true&phone={phone}&otp={otp_code}"
+    return Response({
+        'message': 'Test subscription created',
+        'phone': phone,
+        'otp': otp_code,
+        'tier': tier.name,
+        'registration_url': reg_url,
+    })
 
 
 @api_view(['POST'])
@@ -1072,6 +1126,11 @@ class ReelViewSet(viewsets.ModelViewSet):
             reel = Reel.objects.select_related('user', 'user__profile').annotate(
                 comment_count_db=Count('comments', distinct=True)
             ).get(pk=reel.pk)
+
+            # Dispatch async media processing (FFmpeg + blurhash)
+            from api.tasks import process_reel_media
+            process_reel_media.delay(reel.pk)
+            print(f"[REEL CREATE] queued process_reel_media for reel {reel.pk}")
 
             serializer = self.get_serializer(reel)
             return Response(serializer.data, status=status.HTTP_201_CREATED)

@@ -66,3 +66,39 @@ def delete_like_notification(sender, instance, **kwargs):
         notification_type='like',
         reel=instance.reel
     ).delete()
+
+
+@receiver(post_save, sender=Notification)
+def push_notification_on_create(sender, instance, created, **kwargs):
+    """Send FCM push notification when a new Notification row is created."""
+    if not created:
+        return
+    try:
+        from api.tasks import send_push_notification
+        type_titles = {
+            'like': 'New Like',
+            'comment': 'New Comment',
+            'follow': 'New Follower',
+            'gift': 'You received a gift!',
+        }
+        send_push_notification.delay(
+            instance.recipient_id,
+            {
+                'title': type_titles.get(instance.notification_type, 'FlipStar'),
+                'body': instance.message,
+                'data': {'notification_type': instance.notification_type},
+            }
+        )
+    except Exception:
+        pass
+
+
+@receiver(post_save, sender=UserProfile)
+def optimize_profile_photo_on_save(sender, instance, **kwargs):
+    """Queue profile photo optimisation whenever it changes."""
+    if instance.profile_photo and not str(instance.profile_photo).startswith('http'):
+        try:
+            from api.tasks import optimize_profile_image
+            optimize_profile_image.delay(instance.user_id)
+        except Exception:
+            pass

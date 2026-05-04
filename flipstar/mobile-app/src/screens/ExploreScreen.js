@@ -56,7 +56,7 @@ const fmt = (n) => {
 };
 
 // Avatar component
-function Avatar({ uri, size = 40, name = '' }) {
+const Avatar = React.memo(function Avatar({ uri, size = 40, name = '' }) {
   const [err, setErr] = useState(false);
   const safeName = name || '?';
   
@@ -92,10 +92,10 @@ function Avatar({ uri, size = 40, name = '' }) {
       </Text>
     </View>
   );
-}
+});
 
 // Video thumbnail component matching website
-function VideoThumb({ reel, rank, index = 0, hero = false, onOpen }) {
+const VideoThumb = React.memo(function VideoThumb({ reel, rank, index = 0, hero = false, onOpen }) {
   const videoUrl = reel.file_url || reel.media;
   const imageUrl = reel.image || reel.media;
   const isVid = !!(videoUrl || '').match(/\.(mp4|webm|ogg|mov)/i) || (videoUrl && videoUrl.includes('/video/'));
@@ -186,7 +186,7 @@ function VideoThumb({ reel, rank, index = 0, hero = false, onOpen }) {
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 // Skeleton loader component
 function GridSkeleton() {
@@ -346,15 +346,15 @@ export default function ExploreScreen({ navigation }) {
       .finally(() => setLoading(false));
   };
 
-  const openReel = (reel) => {
+  const openReel = useCallback((reel) => {
     navigation.navigate('ReelsDetail', { initialVideoId: reel.id });
-  };
+  }, [navigation]);
 
   const openProfile = (userId) => {
     navigation.navigate('Profile', { userId });
   };
 
-  const renderGridItem = ({ item, index }) => (
+  const renderGridItem = useCallback(({ item, index }) => (
     <VideoThumb
       reel={item}
       rank={index}
@@ -362,7 +362,7 @@ export default function ExploreScreen({ navigation }) {
       hero={index === 0 && !inSearchMode}
       onOpen={openReel}
     />
-  );
+  ), [inSearchMode, openReel]);
 
   return (
     <View style={styles.container}>

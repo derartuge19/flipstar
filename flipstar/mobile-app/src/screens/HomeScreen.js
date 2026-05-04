@@ -375,6 +375,14 @@ export default function HomeScreen({ navigation }) {
   };
 
   const handleTabPress = (tab) => {
+    if (tab === 'Explore') {
+      navigation.navigate('Explore');
+      return;
+    }
+    if (tab === 'Campaigns') {
+      navigation.navigate('Campaigns');
+      return;
+    }
     setActiveTab(tab);
   };
 
@@ -780,6 +788,9 @@ export default function HomeScreen({ navigation }) {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text style={styles.username}>{post.user?.username}</Text>
               </View>
+              {post.created_at ? (
+                <Text style={styles.timeAgo}>{timeAgo(post.created_at)}</Text>
+              ) : null}
             </View>
           </TouchableOpacity>
             
@@ -941,19 +952,12 @@ export default function HomeScreen({ navigation }) {
       
       {/* Header */}
       <View style={styles.header}>
-        <Image 
-          source={require('../../assets/images/flipstar-logo.png')} 
-          style={styles.headerLogo}
-          resizeMode="contain"
-        />
-        <View style={{ flexDirection: 'row', gap: 14 }}>
-          <TouchableOpacity onPress={() => navigation.navigate('Notifications')}>
-            <Ionicons name="notifications-outline" size={24} color={GOLD} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('Explore')}>
-            <Ionicons name="search" size={24} color={GOLD} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity onPress={() => navigation.navigate('Explore')}>
+          <Ionicons name="search" size={24} color={GOLD} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.navigate('Notifications')}>
+          <Ionicons name="notifications-outline" size={24} color={GOLD} />
+        </TouchableOpacity>
       </View>
 
       {/* Tab Navigation */}
@@ -1012,11 +1016,7 @@ export default function HomeScreen({ navigation }) {
           initialNumToRender={3}
           updateCellsBatchingPeriod={50}
         />
-      ) : (
-        <View style={styles.centered}>
-          <Text style={{ color: '#666' }}>Navigate to {activeTab}</Text>
-        </View>
-      )}
+      ) : null}
 
       {/* Share Toast */}
       {shareToast !== '' && (

@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - flipstar_network
     restart: unless-stopped
@@ -39,6 +39,7 @@ services:
     environment:
       DEBUG: ${DEBUG:-False}
       SECRET_KEY: ${SECRET_KEY:-changeme}
+      DB_ENGINE: django.db.backends.postgresql
       DB_NAME: flipstar_db
       DB_USER: flipstar_user
       DB_PASSWORD: ${DB_PASSWORD:-changeme}

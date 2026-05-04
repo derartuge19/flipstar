@@ -5,8 +5,8 @@ import { useTheme } from './contexts/ThemeContext';
 import api from './api';
 
 // Lazy load ALL non-critical components for smaller initial bundle
-const ModernLoginScreen = lazy(() => import('./components/ModernLoginScreen').then(m => ({ default: m.ModernLoginScreen })));
-const ModernRegisterScreen = lazy(() => import('./components/ModernRegisterScreen').then(m => ({ default: m.ModernRegisterScreen })));
+const PhoneLoginModal = lazy(() => import('./components/PhoneLoginModal').then(m => ({ default: m.PhoneLoginModal })));
+const SubscriptionRegisterModal = lazy(() => import('./components/SubscriptionRegisterModal').then(m => ({ default: m.SubscriptionRegisterModal })));
 const LandingPage = lazy(() => import('./components/LandingPage').then(m => ({ default: m.LandingPage })));
 const EnhancedPostPage = lazy(() => import('./components/EnhancedPostPage').then(m => ({ default: m.EnhancedPostPage })));
 const ProfilePage = lazy(() => import('./components/ProfilePage').then(m => ({ default: m.ProfilePage })));
@@ -182,61 +182,22 @@ export default function WerqRoot() {
   });
 
   const [showLogin, setShowLogin] = useState(false);
-  const [showRegister, setShowRegister] = useState(false);
 
-  // Check URL parameters for register=true to open registration screen
+  // Parse URL params for subscription registration link (sent via Onevas SMS)
+  const _urlParams = new URLSearchParams(window.location.search);
+  const _isSubTp = _urlParams.get('subscription_tp') === 'true' || _urlParams.get('subscriptiontp') === 'true';
+  const _prefillPhone = _urlParams.get('phone') || '';
+  const _prefillOtp = _urlParams.get('otp') || '';
+
+  // If arriving via SMS registration link, show register modal (not login)
+  const [showSubRegister, setShowSubRegister] = useState(_isSubTp && !authUser);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('register') === 'true') {
-      setShowRegister(true);
-      // Clean up URL
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-    // Check for subscription params (both with and without underscore)
-    if (params.get('subscription_tp') === 'true' || params.get('subscriptiontp') === 'true') {
-      setShowLogin(true);
-    }
-    if (params.get('login') === 'true') {
-      setShowLogin(true);
-    }
+    if (params.get('login') === 'true') setShowLogin(true);
   }, []);
 
-  // Show login screen when URL params change (e.g., when clicking link while already logged in)
-  useEffect(() => {
-    const checkUrlParams = () => {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('login') === 'true' || params.get('subscription_tp') === 'true' || params.get('subscriptiontp') === 'true') {
-        setShowLogin(true);
-      }
-    };
-
-    // Check on mount
-    checkUrlParams();
-
-    // Also listen for URL changes
-    window.addEventListener('popstate', checkUrlParams);
-    return () => window.removeEventListener('popstate', checkUrlParams);
-  }, []);
-
-  // Force show login screen if URL params are present (runs on every render)
-  const forceShowLogin = (() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('login') === 'true' || params.get('subscription_tp') === 'true' || params.get('subscriptiontp') === 'true';
-  })();
-
-  // Force screen to landing when subscription or login params are present
-  useEffect(() => {
-    if (forceShowLogin && screen === 'app') {
-      setScreen('landing');
-    }
-  }, [forceShowLogin, screen]);
-
-  // Update showLogin state if URL params are present
-  useEffect(() => {
-    if (forceShowLogin && !showLogin) {
-      setShowLogin(true);
-    }
-  }, [forceShowLogin, showLogin]);
+  const forceShowLogin = false;
 
   // ── Restore navigation state from browser history on initial load ──
   // This ensures that refreshing the page maintains the current view
@@ -533,7 +494,6 @@ export default function WerqRoot() {
       const state = event.state || {};
       // Restore state from history
       setShowLogin(state.showLogin || false);
-      setShowRegister(state.showRegister || false);
       setShowPostPage(state.showPostPage || false);
       setShowProfile(state.showProfile || false);
       setProfileUserId(state.profileUserId || null);
@@ -570,7 +530,6 @@ export default function WerqRoot() {
   const pushHistoryState = (newState, replace = false) => {
     const state = {
       showLogin: newState.showLogin !== undefined ? newState.showLogin : showLogin,
-      showRegister: newState.showRegister !== undefined ? newState.showRegister : showRegister,
       showPostPage: newState.showPostPage !== undefined ? newState.showPostPage : showPostPage,
       showProfile: newState.showProfile !== undefined ? newState.showProfile : showProfile,
       profileUserId: newState.profileUserId !== undefined ? newState.profileUserId : profileUserId,
@@ -1326,7 +1285,7 @@ export default function WerqRoot() {
             <Suspense fallback={<PageSkeleton />}>
               <LandingPage
                 onLogin={() => setShowLogin(true)}
-                onRegister={() => setShowRegister(true)}
+                onRegister={() => { setShowLogin(true); }}
                 onShowCampaigns={handleShowCampaigns}
               />
             </Suspense>
@@ -1376,85 +1335,65 @@ export default function WerqRoot() {
           />
         )}
       </AppShell>
-      {(showLogin || forceShowLogin) && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 3000,
-            overflow: 'auto',
-          }}
-          onClick={() => setShowLogin(false)}
-        >
-          <div
-            style={{ width: '100%', maxWidth: 480, margin: 'auto' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <LazyLoadErrorBoundary>
-              <Suspense fallback={<PageSkeleton />}>
-                <ModernLoginScreen
-                  onSuccess={(u) => {
-                    setAuthUser(u);
-                    localStorage.setItem('user', JSON.stringify(u));
-                    setShowLogin(false);
-                  }}
-                  onRegister={() => {
-                    setShowLogin(false);
-                    setShowRegister(true);
-                  }}
-                  onBack={() => setShowLogin(false)}
-                />
-              </Suspense>
-            </LazyLoadErrorBoundary>
-          </div>
+      {/* ── SMS Registration (arriving via Onevas link) ── */}
+      {showSubRegister && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 4000, overflowY: 'auto', background: '#0D0D0D' }}>
+          <LazyLoadErrorBoundary>
+            <Suspense fallback={<PageSkeleton />}>
+              <SubscriptionRegisterModal
+                prefillPhone={_prefillPhone}
+                prefillOtp={_prefillOtp}
+                onSuccess={(u) => {
+                  setAuthUser(u);
+                  localStorage.setItem('user', JSON.stringify(u));
+                  setShowSubRegister(false);
+                }}
+                onBackToLogin={() => {
+                  setShowSubRegister(false);
+                  setShowLogin(true);
+                }}
+              />
+            </Suspense>
+          </LazyLoadErrorBoundary>
         </div>
       )}
 
-      {showRegister && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 3000,
-            overflow: 'auto',
-          }}
-          onClick={() => setShowRegister(false)}
-        >
-          <div
-            style={{ width: '100%', maxWidth: 480, margin: 'auto' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <LazyLoadErrorBoundary>
-              <Suspense fallback={<PageSkeleton />}>
-                <ModernRegisterScreen
-                  onSuccess={(u) => {
-                    setAuthUser(u);
-                    localStorage.setItem('user', JSON.stringify(u));
-                    setShowRegister(false);
-                  }}
-                  onLogin={() => {
-                    setShowRegister(false);
-                    setShowLogin(true);
-                  }}
-                  onBack={() => setShowRegister(false)}
-                />
-              </Suspense>
-            </LazyLoadErrorBoundary>
-          </div>
+      {/* ── Phone Login Modal ── */}
+      {showLogin && !showSubRegister && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, overflowY: 'auto', background: '#0D0D0D' }}>
+          <LazyLoadErrorBoundary>
+            <Suspense fallback={<PageSkeleton />}>
+              <PhoneLoginModal
+                onSuccess={(u) => {
+                  setAuthUser(u);
+                  localStorage.setItem('user', JSON.stringify(u));
+                  setShowLogin(false);
+                }}
+                onSignUp={() => {
+                  setShowLogin(false);
+                  setShowSubscription(true);
+                }}
+                onClose={() => setShowLogin(false)}
+              />
+            </Suspense>
+          </LazyLoadErrorBoundary>
+        </div>
+      )}
+
+      {/* ── Subscription Gateway (new user selects plan → SMS) ── */}
+      {showSubscription && !showLogin && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, overflowY: 'auto', background: '#0D0D0D' }}>
+          <LazyLoadErrorBoundary>
+            <Suspense fallback={<PageSkeleton />}>
+              <SubscriptionPage
+                user={null}
+                onBack={() => {
+                  setShowSubscription(false);
+                  setShowLogin(true);
+                }}
+              />
+            </Suspense>
+          </LazyLoadErrorBoundary>
         </div>
       )}
     </div>

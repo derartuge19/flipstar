@@ -348,12 +348,12 @@ class OnevasWebhookView(APIView):
 
         # If no tier found by product_number, try using SMS code from params (Ok1, Ok2, Ok3, Ok4) or password (A, B, C, D)
         if not tier:
-            sms_code = keyword_from_params or password
+            sms_code = (keyword_from_params or password or '').upper()
             sms_code_mapping = {
-                'A': 'daily', 'OK1': 'daily',
-                'B': 'weekly', 'OK2': 'weekly',
-                'C': 'monthly', 'OK3': 'monthly',
-                'D': 'ondemand', 'OK4': 'ondemand'
+                'OK1': 'daily',
+                'OK2': 'weekly',
+                'OK3': 'monthly',
+                'OK4': 'ondemand',
             }
             duration_type = sms_code_mapping.get(sms_code)
             if duration_type:
@@ -598,11 +598,7 @@ class OnevasWebhookView(APIView):
             profile.is_trial_user = False
             profile.save()
 
-            # Generate OTP and send SMS
-            otp_code = OTPService.generate_otp()
-            active_sub.setup_otp = otp_code
-            active_sub.save()
-            duration_text = f"{tier.duration_days} days" if tier.duration_days else tier.duration_type
+            # Send simple confirmation SMS - existing user already has account & PIN
             stop_keywords = {
                 'daily': 'STOP',
                 'weekly': 'STOP2',
@@ -610,7 +606,6 @@ class OnevasWebhookView(APIView):
                 'ondemand': 'STOP'
             }
             stop_keyword = stop_keywords.get(tier.duration_type, 'STOP')
-            # Determine price period based on tier
             price_periods = {
                 'daily': 'day',
                 'weekly': 'week',
@@ -618,8 +613,8 @@ class OnevasWebhookView(APIView):
                 'ondemand': 'use'
             }
             price_period = price_periods.get(tier.duration_type, 'day')
-            renewal_message = f"Dear valued customer, your {tier.name} Flipstar subscription has been successfully renewed, effective from {active_sub.start_date.strftime('%Y-%m-%d %H:%M')}. You have 1 day remaining in your complimentary free trial. After your free trial concludes, the subscription price will be {tier.price_etb} ETB per {price_period}. To login to your account, please click on https://postworqq.vercel.app?login=true and enter your OTP: {otp_code}. To cancel your subscription at any time, please send {stop_keyword} to {tier.short_code}."
-            print(f"[SUBSCRIPTION DEBUG] Sending renewal SMS to {phone_number} with OTP: {otp_code}")
+            renewal_message = f"Dear {user.username}, your {tier.name} FlipStar subscription has been successfully renewed. Price: {tier.price_etb} ETB per {price_period}. Open FlipStar and log in with your phone number and PIN. To cancel, send {stop_keyword} to {tier.short_code}."
+            print(f"[SUBSCRIPTION DEBUG] Sending simple renewal SMS to {phone_number} (existing user)")
             sms_result = self.send_sms(phone_number, renewal_message, tier.duration_type)
             print(f"[SUBSCRIPTION DEBUG] Renewal SMS sent: {sms_result}")
 
@@ -673,11 +668,7 @@ class OnevasWebhookView(APIView):
                 profile.is_trial_user = False
                 profile.save()
 
-                # Generate OTP and send SMS
-                otp_code = OTPService.generate_otp()
-                subscription.setup_otp = otp_code
-                subscription.save()
-                duration_text = f"{tier.duration_days} days" if tier.duration_days else tier.duration_type
+                # Send simple confirmation SMS - existing user already has account & PIN
                 stop_keywords = {
                     'daily': 'STOP',
                     'weekly': 'STOP2',
@@ -685,7 +676,6 @@ class OnevasWebhookView(APIView):
                     'ondemand': 'STOP'
                 }
                 stop_keyword = stop_keywords.get(tier.duration_type, 'STOP')
-                # Determine price period based on tier
                 price_periods = {
                     'daily': 'day',
                     'weekly': 'week',
@@ -693,10 +683,10 @@ class OnevasWebhookView(APIView):
                     'ondemand': 'use'
                 }
                 price_period = price_periods.get(tier.duration_type, 'day')
-                confirmation_message = f"Dear valued customer, you have successfully subscribed to the {tier.name} Flipstar service, effective from {subscription.start_date.strftime('%Y-%m-%d %H:%M')}. You have 1 day remaining in your complimentary free trial. After your free trial concludes, the subscription price will be {tier.price_etb} ETB per {price_period}. To login to your account, please click on https://postworqq.vercel.app?login=true and enter your OTP: {otp_code}. To cancel your subscription at any time, please send {stop_keyword} to {tier.short_code}."
-                print(f"[SUBSCRIPTION DEBUG] Sending success SMS to {phone_number} with OTP: {otp_code}")
+                confirmation_message = f"Dear {user.username}, your {tier.name} FlipStar subscription is now active. Price: {tier.price_etb} ETB per {price_period}. Open FlipStar and log in with your phone number and PIN. To cancel, send {stop_keyword} to {tier.short_code}."
+                print(f"[SUBSCRIPTION DEBUG] Sending simple confirmation SMS to {phone_number} (existing user)")
                 sms_result = self.send_sms(phone_number, confirmation_message, tier.duration_type)
-                print(f"[SUBSCRIPTION DEBUG] Success SMS sent: {sms_result}")
+                print(f"[SUBSCRIPTION DEBUG] Confirmation SMS sent: {sms_result}")
 
                 return Response({'status': 'success', 'message': 'Subscription created'})
 
